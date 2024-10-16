@@ -14,7 +14,7 @@ jobs:
         run: swiftformat . --lint --reporter github-actions-log
 
       - name: lint
-        run: swiftlint lint --strict
+        uses: norio-nomura/action-swiftlint@3.2.1
 
       - name: build
         run: |
