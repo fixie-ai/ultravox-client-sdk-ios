@@ -1,0 +1,26 @@
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: format
+        run: swiftformat . --lint --reporter github-actions-log
+
+      - name: lint
+        run: swiftlint lint --strict
+
+      - name: build
+        run: |
+          xcodebuild \
+           -project Ultravox \
+           -scheme Ultravox \
+           -sdk iphonesimulator \
+           -destination 'platform=iOS Simulator,name=iPhone 14 Pro,OS=17.2' \
+            build || exit 1
