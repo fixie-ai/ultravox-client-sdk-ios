@@ -146,7 +146,7 @@ public final class UltravoxSession: NSObject {
     public private(set) var micMuted: Bool = false {
         didSet {
             if micMuted != oldValue {
-                room.localParticipant?.setMicrophoneEnabled(!micMuted)
+                room?.localParticipant.setMicrophoneEnabled(!micMuted)
                 NotificationCenter.default.post(name: .micMuted, object: nil)
             }
         }
@@ -158,9 +158,11 @@ public final class UltravoxSession: NSObject {
     public private(set) var speakerMuted: Bool = false {
         didSet {
             if speakerMuted != oldValue {
-                for participant in room.remoteParticipants {
-                    for publication in participant.audioTrackPublications {
-                        publication.track?.isEnabled = !speakerMuted
+                for participant in room?.remoteParticipants ?? [] {
+                    for publication in participant.validTrackPublications {
+                        if publication.kind == .audio {
+                            publication.enabled = !speakerMuted
+                        }
                     }
                 }
                 NotificationCenter.default.post(name: .speakerMuted, object: nil)
@@ -169,7 +171,7 @@ public final class UltravoxSession: NSObject {
     }
 
     private var webSocketTask: URLSessionWebSocketTask?
-    private var room: Room = .init(delegate: self)
+    private var room: Room?
     private var registeredTools: [String: ClientToolImplementation] = [:]
     private var experimentalMessages: Set<String>
 
@@ -217,8 +219,9 @@ public final class UltravoxSession: NSObject {
                             guard let roomInfo = message["room_info"] as? [String: Any] else { return }
                             guard let roomUrl = roomInfo["roomUrl"] as? String else { return }
                             guard let token = roomInfo["token"] as? String else { return }
+                            room = Room(delegate: self)
                             await room.connect(url: roomUrl, token: token)
-                            await room.localParticipant!.setMicrophoneEnabled(!micMuted)
+                            await room.localParticipant.setMicrophoneEnabled(!micMuted)
                             self.status = .idle
                         default:
                             break
@@ -310,7 +313,7 @@ public final class UltravoxSession: NSObject {
 
     private func sendData(data: [String: Any]) async {
         guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else { return }
-        await room.localParticipant?.publish(data: jsonData, options: DataPublishOptions(reliable: true))
+        await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
     }
 
     private func disconnect() {
@@ -318,35 +321,39 @@ public final class UltravoxSession: NSObject {
             return
         }
         status = .disconnecting
-        await room.disconnect()
+        await room?.disconnect()
         await webSocketTask?.close()
         status = .disconnected
     }
 }
 
 extension UltravoxSession: URLSessionWebSocketDelegate {
-    func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) {}
+    public nonisolated func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) {}
 
-    func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didCloseWith _: URLSessionWebSocketTask.CloseCode, reason _: Data?) {
-        disconnect()
+    public nonisolated func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didCloseWith _: URLSessionWebSocketTask.CloseCode, reason _: Data?) {
+        Task {
+            await disconnect()
+        }
     }
 }
 
 extension UltravoxSession: RoomDelegate {
-    func room(_: Room, participant _: RemoteParticipant?, didReceiveData data: Data, forTopic _: String) {
+    public nonisolated func room(_: Room, participant _: RemoteParticipant?, didReceiveData data: Data, forTopic _: String) {
         guard let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
         switch message["type"] as? String {
         case "state":
-            if let state = message["state"] as? String {
-                switch state {
-                case "listening":
-                    status = .listening()
-                case "thinking":
-                    status = .thinking()
-                case "speaking":
-                    status = .speaking()
-                default:
-                    break
+            Task {
+                if let state = message["state"] as? String {
+                    switch state {
+                    case "listening":
+                        status = .listening()
+                    case "thinking":
+                        status = .thinking()
+                    case "speaking":
+                        status = .speaking()
+                    default:
+                        break
+                    }
                 }
             }
         case "transcript":
@@ -357,7 +364,9 @@ extension UltravoxSession: RoomDelegate {
             {
                 let medium = mediumStr == "voice" ? Medium.voice : Medium.text
                 let transcript = Transcript(text: text, isFinal: isFinal, speaker: .user, medium: medium)
-                addOrUpdateTranscript(transcript)
+                Task {
+                    await addOrUpdateTranscript(transcript)
+                }
             }
         case "voice_synced_transcript", "agent_text_transcript":
             let medium = message["type"] as? String == "voice_synced_transcript" ? Medium.voice : Medium.text
@@ -365,7 +374,9 @@ extension UltravoxSession: RoomDelegate {
                let isFinal = message["final"] as? Bool
             {
                 let transcript = Transcript(text: text, isFinal: isFinal, speaker: .agent, medium: medium)
-                addOrUpdateTranscript(transcript)
+                Task {
+                    await addOrUpdateTranscript(transcript)
+                }
             } else if let delta = message["delta"] as? String,
                       let isFinal = message["final"] as? Bool,
                       let last = transcriptsNotifier.transcripts.last,
@@ -373,14 +384,18 @@ extension UltravoxSession: RoomDelegate {
             {
                 let updatedText = last.text + delta
                 let transcript = Transcript(text: updatedText, isFinal: isFinal, speaker: .agent, medium: medium)
-                addOrUpdateTranscript(transcript)
+                Task {
+                    await addOrUpdateTranscript(transcript)
+                }
             }
         case "client_tool_invocation":
             if let toolName = message["toolName"] as? String,
                let invocationId = message["invocationId"] as? String,
                let parameters = message["parameters"] as? [String: Any]
             {
-                invokeClientTool(toolName: toolName, invocationId: invocationId, parameters: parameters)
+                Task {
+                    await invokeClientTool(toolName: toolName, invocationId: invocationId, parameters: parameters)
+                }
             }
         default:
             if !experimentalMessages.isEmpty {
