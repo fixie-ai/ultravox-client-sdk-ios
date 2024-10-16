@@ -1,6 +1,6 @@
+import AVFoundation
 import Foundation
 import LiveKit
-import AVFoundation
 import WebKit
 
 // MARK: - Enums
@@ -37,9 +37,9 @@ public enum UltravoxSessionStatus {
     func isLive() -> Bool {
         switch self {
         case .idle, .listening, .thinking, .speaking:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 }
@@ -131,14 +131,13 @@ public final class UltravoxSession: NSObject {
     private var _transcripts: [Transcript] = []
     /// The transcripts exchanged during the call.
     public var transcripts: [Transcript] {
-        get {
-            let immutableCopy = _transcripts
-            return immutableCopy
-        }
+        let immutableCopy = _transcripts
+        return immutableCopy
     }
+
     /// The most recent transcript exchanged.
     public var lastTranscript: Transcript? {
-        return _transcripts.last
+        _transcripts.last
     }
 
     /// The current mute status of the user's microphone.
@@ -170,7 +169,7 @@ public final class UltravoxSession: NSObject {
     }
 
     private var webSocketTask: URLSessionWebSocketTask?
-    private var room: Room = Room(delegate: self)
+    private var room: Room = .init(delegate: self)
     private var registeredTools: [String: ClientToolImplementation] = [:]
     private var experimentalMessages: Set<String>
 
@@ -187,7 +186,7 @@ public final class UltravoxSession: NSObject {
     }
 
     /// Convenience batch wrapper for `registerToolImplementation`.
-    public func registerToolImplementations(_ implementations: [String: ClientToolImplementation]) {
+    public func registerToolImplementations(implementations: [String: ClientToolImplementation]) {
         for (name, implementation) in implementations {
             registerToolImplementation(name: name, implementation: implementation)
         }
@@ -207,24 +206,24 @@ public final class UltravoxSession: NSObject {
             webSocketTask?.resume()
             webSocketTask?.receive { result in
                 switch result {
-                case .failure(let error):
+                case let .failure(error):
                     print("Error receiving message: \(error)")
-                case .success(let message):
+                case let .success(message):
                     switch message {
-                    case .string(let text):
+                    case let .string(text):
                         guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
                         switch message["type"] as? String {
-                            case "room_info":
-                                guard let roomInfo = message["room_info"] as? [String: Any] else { return }
-                                guard let roomUrl = roomInfo["roomUrl"] as? String else { return }
-                                guard let token = roomInfo["token"] as? String else { return }
-                                await room.connect(url: roomUrl, token: token)
-                                await room.localParticipant!.setMicrophoneEnabled(!micMuted)
-                                self.status = .idle
-                            default:
-                                break
+                        case "room_info":
+                            guard let roomInfo = message["room_info"] as? [String: Any] else { return }
+                            guard let roomUrl = roomInfo["roomUrl"] as? String else { return }
+                            guard let token = roomInfo["token"] as? String else { return }
+                            await room.connect(url: roomUrl, token: token)
+                            await room.localParticipant!.setMicrophoneEnabled(!micMuted)
+                            self.status = .idle
+                        default:
+                            break
                         }
-                    case .data(let data):
+                    case let .data(data):
                         break
                     @unknown default:
                         break
@@ -284,7 +283,7 @@ public final class UltravoxSession: NSObject {
                 "type": "client_tool_result",
                 "invocationId": invocationId,
                 "errorType": "undefined",
-                "errorMessage": "Client tool \(toolName) is not registered (iOS client)"
+                "errorMessage": "Client tool \(toolName) is not registered (iOS client)",
             ])
             return
         }
@@ -293,7 +292,7 @@ public final class UltravoxSession: NSObject {
             var data: [String: Any] = [
                 "type": "client_tool_result",
                 "invocationId": invocationId,
-                "result": result.result
+                "result": result.result,
             ]
             if let responseType = result.responseType {
                 data["responseType"] = responseType
@@ -304,7 +303,7 @@ public final class UltravoxSession: NSObject {
                 "type": "client_tool_result",
                 "invocationId": invocationId,
                 "errorType": "implementation-error",
-                "errorMessage": "\(error)"
+                "errorMessage": "\(error)",
             ])
         }
     }
@@ -323,20 +322,18 @@ public final class UltravoxSession: NSObject {
         await webSocketTask?.close()
         status = .disconnected
     }
-
 }
 
 extension UltravoxSession: URLSessionWebSocketDelegate {
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {}
+    func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) {}
 
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+    func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didCloseWith _: URLSessionWebSocketTask.CloseCode, reason _: Data?) {
         disconnect()
     }
-
 }
 
 extension UltravoxSession: RoomDelegate {
-    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String) {
+    func room(_: Room, participant _: RemoteParticipant?, didReceiveData data: Data, forTopic _: String) {
         guard let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
         switch message["type"] as? String {
         case "state":
@@ -356,7 +353,8 @@ extension UltravoxSession: RoomDelegate {
             if let transcriptData = message["transcript"] as? [String: Any],
                let text = transcriptData["text"] as? String,
                let isFinal = transcriptData["final"] as? Bool,
-               let mediumStr = transcriptData["medium"] as? String {
+               let mediumStr = transcriptData["medium"] as? String
+            {
                 let medium = mediumStr == "voice" ? Medium.voice : Medium.text
                 let transcript = Transcript(text: text, isFinal: isFinal, speaker: .user, medium: medium)
                 addOrUpdateTranscript(transcript)
@@ -364,13 +362,15 @@ extension UltravoxSession: RoomDelegate {
         case "voice_synced_transcript", "agent_text_transcript":
             let medium = message["type"] as? String == "voice_synced_transcript" ? Medium.voice : Medium.text
             if let text = message["text"] as? String,
-               let isFinal = message["final"] as? Bool {
+               let isFinal = message["final"] as? Bool
+            {
                 let transcript = Transcript(text: text, isFinal: isFinal, speaker: .agent, medium: medium)
                 addOrUpdateTranscript(transcript)
             } else if let delta = message["delta"] as? String,
                       let isFinal = message["final"] as? Bool,
                       let last = transcriptsNotifier.transcripts.last,
-                      last.speaker == .agent {
+                      last.speaker == .agent
+            {
                 let updatedText = last.text + delta
                 let transcript = Transcript(text: updatedText, isFinal: isFinal, speaker: .agent, medium: medium)
                 addOrUpdateTranscript(transcript)
@@ -378,7 +378,8 @@ extension UltravoxSession: RoomDelegate {
         case "client_tool_invocation":
             if let toolName = message["toolName"] as? String,
                let invocationId = message["invocationId"] as? String,
-               let parameters = message["parameters"] as? [String: Any] {
+               let parameters = message["parameters"] as? [String: Any]
+            {
                 invokeClientTool(toolName: toolName, invocationId: invocationId, parameters: parameters)
             }
         default:
