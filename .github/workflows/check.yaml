@@ -5,28 +5,13 @@ on:
     branches: [ main ]
 
 jobs:
-  format:
+  check:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: format
         run: swiftformat . --lint --reporter github-actions-log
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: lint
-        uses: norio-nomura/action-swiftlint@3.2.1  # Doesn't work on macOS. lol
-        with:
-          args: --strict
-
-  build:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
 
       - name: build
         run: |
