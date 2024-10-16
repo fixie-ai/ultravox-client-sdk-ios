@@ -146,7 +146,7 @@ public final class UltravoxSession: NSObject {
     public private(set) var micMuted: Bool = false {
         didSet {
             if micMuted != oldValue {
-                room?.localParticipant.setMicrophoneEnabled(!micMuted)
+                room?.localParticipant.setMicrophone(enabled: !micMuted)
                 NotificationCenter.default.post(name: .micMuted, object: nil)
             }
         }
@@ -158,7 +158,7 @@ public final class UltravoxSession: NSObject {
     public private(set) var speakerMuted: Bool = false {
         didSet {
             if speakerMuted != oldValue {
-                for participant in room?.remoteParticipants ?? [] {
+                for participant in room?.remoteParticipants.values ?? [] {
                     for publication in participant.validTrackPublications {
                         if publication.kind == .audio {
                             publication.enabled = !speakerMuted
@@ -221,7 +221,7 @@ public final class UltravoxSession: NSObject {
                             guard let token = roomInfo["token"] as? String else { return }
                             room = Room(delegate: self)
                             await room.connect(url: roomUrl, token: token)
-                            await room.localParticipant.setMicrophoneEnabled(!micMuted)
+                            await room.localParticipant.setMicrophone(enabled: !micMuted)
                             self.status = .idle
                         default:
                             break
