@@ -218,7 +218,7 @@ public final class UltravoxSession: NSObject {
             do {
                 try await room?.connect(url: roomInfo.roomUrl, token: roomInfo.token)
                 try await room?.localParticipant.setMicrophone(enabled: !micMuted)
-                self.status = .idle
+                status = .idle
             } catch {
                 room = nil
                 print("Error connecting to room: \(error)")
@@ -261,7 +261,7 @@ public final class UltravoxSession: NSObject {
     public func toggleSpeakerMuted() {
         speakerMuted = !speakerMuted
     }
-    
+
     private func handleData(message: [String: Any]) {
         switch message["type"] as? String {
         case "state":
@@ -395,12 +395,12 @@ public extension Notification.Name {
     static let speakerMuted = Notification.Name("UltravoxSession.speaker_muted")
 }
 
-fileprivate struct RoomInfoMessage: Sendable {
+private struct RoomInfoMessage: Sendable {
     let roomUrl: String
     let token: String
 }
 
-fileprivate final class WebSocketConnection: NSObject, Sendable {
+private final class WebSocketConnection: NSObject, Sendable {
     private let webSocketTask: URLSessionWebSocketTask
 
     init(
@@ -418,23 +418,24 @@ fileprivate final class WebSocketConnection: NSObject, Sendable {
 
     private func receiveSingleMessage() async throws -> RoomInfoMessage? {
         switch try await webSocketTask.receive() {
-            case let .data(messageData):
-                print("Unexpected data message")
-                return nil
-            case let .string(text):
-                guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return nil }
-                guard message["type"] as? String == "room_info" else {return nil}
-                guard let roomInfo = message["room_info"] as? [String: Any] else { return nil }
-                guard let roomUrl = roomInfo["roomUrl"] as? String else { return nil }
-                guard let token = roomInfo["token"] as? String else { return nil }
-                return RoomInfoMessage(roomUrl: roomUrl, token: token)
+        case let .data(messageData):
+            print("Unexpected data message")
+            return nil
 
-            @unknown default:
-                print("Unexpected message type")
-                return nil
+        case let .string(text):
+            guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return nil }
+            guard message["type"] as? String == "room_info" else { return nil }
+            guard let roomInfo = message["room_info"] as? [String: Any] else { return nil }
+            guard let roomUrl = roomInfo["roomUrl"] as? String else { return nil }
+            guard let token = roomInfo["token"] as? String else { return nil }
+            return RoomInfoMessage(roomUrl: roomUrl, token: token)
+
+        @unknown default:
+            print("Unexpected message type")
+            return nil
         }
     }
-    
+
     func receiveOnce() async -> RoomInfoMessage? {
         do {
             while true {
