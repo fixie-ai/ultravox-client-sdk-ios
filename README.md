@@ -6,9 +6,23 @@ iOS client SDK for [Ultravox](https://ultravox.ai).
 
 ## Getting started
 
-Using XCode, under `Project Settings` -> `Swift Packages` add a new package: `https://github.com/fixie-ai/ultravox-client-sdk-ios`
+### iOS app (in XCode)
 
-Or you can directly add to your `Package.swift`:
+If you're starting from scratch, strongly consider building with [Flutter](https://flutter.dev/) instead.
+
+If you're not starting from scratch then you probably already know how to add this as a dependency, but it will look something like this:
+
+1. `import Ultravox` in any file. After a few seconds you'll see an error about "No such module."
+1. Click on the error and it should give you the option to search package collections. Do so.
+1. Paste this in your search bar (top right) and hit enter: `https://github.com/fixie-ai/ultravox-client-sdk-ios`
+1. This package should be found and this README should be rendered.  Click `Add Package`.
+1. Pick your App target and again click `Add Package`.
+1. Increment your XCode frustrations counter and consider switching to Flutter. 😉
+
+See [Apple's documentation](https://developer.apple.com/documentation/xcode/adding-package-dependencies-to-your-app#Add-a-package-dependency) for more info.
+
+### Swift Package
+If you're building a package, add this to your `Package.swift`:
 
 ```swift
 let package = Package(
