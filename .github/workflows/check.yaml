@@ -1,0 +1,22 @@
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: macos-15  # As of Oct 16, 2024 this is actually later than "latest" and consequently has Swift 6.0.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: format
+        run: swiftformat . --lint --reporter github-actions-log
+
+      - name: build
+        run: |
+          xcodebuild \
+           -scheme Ultravox \
+           -sdk iphonesimulator \
+           -destination 'platform=iOS Simulator,name=iPhone 16 Pro Max,OS=18.0' \
+            build || exit 1

@@ -60,3 +60,7 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Don't commit user-specific workspace files for any IDE
+.vscode/
+.swiftpm/
