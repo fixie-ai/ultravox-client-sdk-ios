@@ -425,9 +425,8 @@ private final class WebSocketConnection: NSObject, Sendable {
         case let .string(text):
             guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return nil }
             guard message["type"] as? String == "room_info" else { return nil }
-            guard let roomInfo = message["room_info"] as? [String: Any] else { return nil }
-            guard let roomUrl = roomInfo["roomUrl"] as? String else { return nil }
-            guard let token = roomInfo["token"] as? String else { return nil }
+            guard let roomUrl = message["roomUrl"] as? String else { return nil }
+            guard let token = message["token"] as? String else { return nil }
             return RoomInfoMessage(roomUrl: roomUrl, token: token)
 
         @unknown default:
