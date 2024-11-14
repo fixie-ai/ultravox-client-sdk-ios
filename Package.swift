@@ -13,7 +13,7 @@ let package = Package(
         .library(
             name: "Ultravox",
             targets: ["Ultravox"],
-            versionString: "0.0.2"
+            versionString: "0.0.3"
         ),
     ],
     dependencies: [

@@ -34,7 +34,7 @@ public enum UltravoxSessionStatus {
     /// The user can interrupt as needed.
     case speaking
 
-    func isLive() -> Bool {
+    public func isLive() -> Bool {
         switch self {
         case .idle, .listening, .thinking, .speaking:
             true
