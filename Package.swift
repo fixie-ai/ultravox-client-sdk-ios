@@ -5,7 +5,6 @@ import PackageDescription
 
 let package = Package(
     name: "Ultravox",
-
     platforms: [
         .iOS(.v13),
         .macOS(.v10_15), // No way to only build for iOS. WTF Apple.
@@ -13,7 +12,8 @@ let package = Package(
     products: [
         .library(
             name: "Ultravox",
-            targets: ["Ultravox"]
+            targets: ["Ultravox"],
+            versionString: "0.0.2"
         ),
     ],
     dependencies: [
