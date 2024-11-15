@@ -61,16 +61,16 @@ public enum Medium {
 /// A transcription of a single utterance.
 public struct Transcript {
     /// The possibly-incomplete text of an utterance.
-    let text: String
+    public let text: String
 
     /// Whether the text is complete or the utterance is ongoing.
-    let isFinal: Bool
+    public let isFinal: Bool
 
     /// Who emitted the utterance.
-    let speaker: Role
+    public let speaker: Role
 
     /// The medium through which the utterance was emitted.
-    let medium: Medium
+    public let medium: Medium
 
     init(text: String, isFinal: Bool, speaker: Role, medium: Medium) {
         self.text = text
