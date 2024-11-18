@@ -52,3 +52,11 @@ await session.leaveCall();
 For a complete example, see https://github.com/fixie-ai/ultravox-client-sdk-ios-example.
 
 To get a `joinUrl`, you'll want to integrate your server with the [Ultravox REST API](https://fixie-ai.github.io/ultradox/).
+
+# To release a new version:
+
+1. Create & push a new tag:
+`git tag <new version number>`
+`git push origin <new version number>`
+
+1. Create a new release
