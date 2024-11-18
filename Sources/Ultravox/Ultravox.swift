@@ -98,7 +98,7 @@ public struct ClientToolResult {
     /// instructions for the server.
     let responseType: String?
 
-    init(result: String, responseType: String? = nil) {
+    public init(result: String, responseType: String? = nil) {
         self.result = result
         self.responseType = responseType
     }
