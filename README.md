@@ -49,4 +49,6 @@ await session.joinCall(joinUrl: "joinUrlFromYourServer");
 await session.leaveCall();
 ```
 
-See the example app at https://github.com/fixie-ai/ultravox-client-sdk-ios-example for a more complete example. To get a `joinUrl`, you'll want to integrate your server with the [Ultravox REST API](https://fixie-ai.github.io/ultradox/).
+For a complete example, see https://github.com/fixie-ai/ultravox-client-sdk-ios-example.
+
+To get a `joinUrl`, you'll want to integrate your server with the [Ultravox REST API](https://fixie-ai.github.io/ultradox/).
