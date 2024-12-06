@@ -3,6 +3,10 @@ import Foundation
 @preconcurrency import LiveKit
 import WebKit
 
+// MARK: - SDK Version
+
+private let sdkVersion: String = "0.0.7"
+
 // MARK: - Enums
 
 /// The current status of an `UltravoxSession`.
@@ -127,16 +131,16 @@ public final class UltravoxSession: NSObject {
         }
     }
 
-    private var _transcripts: [Transcript] = []
+    private var _transcripts: [Transcript?] = []
     /// The transcripts exchanged during the call.
     public var transcripts: [Transcript] {
-        let immutableCopy = _transcripts
+        let immutableCopy = _transcripts.compactMap(\.self)
         return immutableCopy
     }
 
     /// The most recent transcript exchanged.
     public var lastTranscript: Transcript? {
-        _transcripts.last
+        transcripts.last
     }
 
     /// The current mute status of the user's microphone.
@@ -202,14 +206,22 @@ public final class UltravoxSession: NSObject {
     }
 
     /// Connects to a call using the given `joinUrl`.
-    public func joinCall(joinUrl: String) async {
+    public func joinCall(joinUrl: String, clientVersion: String? = nil) async {
         guard let url = URL(string: joinUrl) else { return }
         precondition(status == .disconnected, "Cannot join a call while already connected.")
         status = .connecting
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        if !experimentalMessages.isEmpty {
-            urlComponents?.queryItems = [URLQueryItem(name: "experimentalMessages", value: experimentalMessages.joined(separator: ","))]
+        var queryItems: [URLQueryItem] = urlComponents?.queryItems ?? []
+        var uvClientVersion = "ios_\(sdkVersion)"
+        if clientVersion != nil {
+            uvClientVersion += ":\(clientVersion ?? "")"
         }
+        queryItems.append(URLQueryItem(name: "clientVersion", value: uvClientVersion))
+        queryItems.append(URLQueryItem(name: "apiVersion", value: "1"))
+        if !experimentalMessages.isEmpty {
+            queryItems.append(URLQueryItem(name: "experimentalMessages", value: experimentalMessages.joined(separator: ",")))
+        }
+        urlComponents?.queryItems = queryItems
         if let finalUrl = urlComponents?.url {
             let webSocketTask = URLSession.shared.webSocketTask(with: URLRequest(url: finalUrl))
             socket = WebSocketConnection(webSocketTask: webSocketTask)
@@ -252,6 +264,19 @@ public final class UltravoxSession: NSObject {
         await sendData(data: ["type": "input_text_message", "text": text])
     }
 
+    /// Sends an arbitrary data message to the server.
+    ///
+    /// See https://docs.ultravox.ai/datamessages for message types.
+    public func sendData(data: [String: Any]) async {
+        guard data["type"] != nil else { return }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else { return }
+        do {
+            try await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
+        } catch {
+            print("Error publishing data: \(error)")
+        }
+    }
+
     /// Toggles the mute status of the user's microphone.
     public func toggleMicMuted() {
         micMuted = !micMuted
@@ -263,6 +288,7 @@ public final class UltravoxSession: NSObject {
     }
 
     private func handleData(message: [String: Any]) {
+        NotificationCenter.default.post(name: .dataMessage, object: message)
         switch message["type"] as? String {
         case "state":
             if let state = message["state"] as? String {
@@ -278,30 +304,11 @@ public final class UltravoxSession: NSObject {
                 }
             }
         case "transcript":
-            if let transcriptData = message["transcript"] as? [String: Any],
-               let text = transcriptData["text"] as? String,
-               let isFinal = transcriptData["final"] as? Bool,
-               let mediumStr = transcriptData["medium"] as? String
-            {
-                let medium = mediumStr == "voice" ? Medium.voice : Medium.text
-                let transcript = Transcript(text: text, isFinal: isFinal, speaker: .user, medium: medium)
-                addOrUpdateTranscript(transcript)
-            }
-        case "voice_synced_transcript", "agent_text_transcript":
-            let medium = message["type"] as? String == "voice_synced_transcript" ? Medium.voice : Medium.text
-            if let text = message["text"] as? String,
-               let isFinal = message["final"] as? Bool
-            {
-                let transcript = Transcript(text: text, isFinal: isFinal, speaker: .agent, medium: medium)
-                addOrUpdateTranscript(transcript)
-            } else if let delta = message["delta"] as? String,
-                      let isFinal = message["final"] as? Bool,
-                      let last = lastTranscript,
-                      last.speaker == .agent
-            {
-                let updatedText = last.text + delta
-                let transcript = Transcript(text: updatedText, isFinal: isFinal, speaker: .agent, medium: medium)
-                addOrUpdateTranscript(transcript)
+            if let ordinal = message["ordinal"] as? Int {
+                let medium = message["medium"] as? String == "voice" ? Medium.voice : Medium.text
+                let role = message["role"] as? String == "agent" ? Role.agent : Role.user
+                let isFinal = message["final"] as? Bool ?? false
+                addOrUpdateTranscript(ordinal: ordinal, medium: medium, role: role, isFinal: isFinal, text: message["text"] as? String, delta: message["delta"] as? String)
             }
         case "client_tool_invocation":
             if let toolName = message["toolName"] as? String,
@@ -319,11 +326,16 @@ public final class UltravoxSession: NSObject {
         }
     }
 
-    private func addOrUpdateTranscript(_ transcript: Transcript) {
-        if let last = _transcripts.last, !last.isFinal, last.speaker == transcript.speaker {
-            _transcripts.removeLast()
+    private func addOrUpdateTranscript(ordinal: Int, medium: Medium, role: Role, isFinal: Bool, text: String?, delta: String?) {
+        while _transcripts.count < ordinal {
+            _transcripts.append(nil)
         }
-        _transcripts.append(transcript)
+        if _transcripts.count == ordinal {
+            _transcripts.append(Transcript(text: text ?? delta ?? "", isFinal: isFinal, speaker: role, medium: medium))
+        } else {
+            let priorText = _transcripts[ordinal]?.text ?? ""
+            _transcripts[ordinal] = Transcript(text: text ?? (priorText + (delta ?? "")), isFinal: isFinal, speaker: role, medium: medium)
+        }
         NotificationCenter.default.post(name: .transcripts, object: nil)
     }
 
@@ -358,15 +370,6 @@ public final class UltravoxSession: NSObject {
         }
     }
 
-    private func sendData(data: [String: Any]) async {
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else { return }
-        do {
-            try await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
-        } catch {
-            print("Error publishing data: \(error)")
-        }
-    }
-
     private func disconnect() async {
         guard status != .disconnected else {
             return
@@ -390,6 +393,7 @@ extension UltravoxSession: RoomDelegate {
 public extension Notification.Name {
     static let status = Notification.Name("UltravoxSession.status")
     static let transcripts = Notification.Name("UltravoxSession.transcripts")
+    static let dataMessage = Notification.Name("UltravoxSession.data_message")
     static let experimentalMessage = Notification.Name("UltravoxSession.experimental_message")
     static let micMuted = Notification.Name("UltravoxSession.mic_muted")
     static let speakerMuted = Notification.Name("UltravoxSession.speaker_muted")

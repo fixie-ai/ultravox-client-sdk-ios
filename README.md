@@ -55,8 +55,12 @@ To get a `joinUrl`, you'll want to integrate your server with the [Ultravox REST
 
 # To release a new version:
 
-1. Create & push a new tag:
-`git tag <new version number>`
-`git push origin <new version number>`
+1. Update the sdkVersion constant at the top of Ultravox.swift. This is also the tag you'll use below. It MUST follow semantic versioning.
 
-1. Create a new release
+1. Get your change reviewed and merged.
+
+1. Create & push a new tag:
+`git tag <new sdkVersion>`
+`git push --tags origin main`
+
+1. Create a new release in GitHub please. It should use the same sdkVersion as its name.
