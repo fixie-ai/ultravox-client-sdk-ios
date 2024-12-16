@@ -5,7 +5,7 @@ import WebKit
 
 // MARK: - SDK Version
 
-private let sdkVersion: String = "0.0.7"
+private let sdkVersion: String = "0.0.8"
 
 // MARK: - Enums
 
@@ -270,10 +270,14 @@ public final class UltravoxSession: NSObject {
     public func sendData(data: [String: Any]) async {
         guard data["type"] != nil else { return }
         guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else { return }
-        do {
-            try await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
-        } catch {
-            print("Error publishing data: \(error)")
+        if jsonData.count > 1024 {
+            socket?.send(data: jsonData)
+        } else {
+            do {
+                try await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
+            } catch {
+                print("Error publishing data: \(error)")
+            }
         }
     }
 
@@ -450,6 +454,14 @@ private final class WebSocketConnection: NSObject, Sendable {
         } catch {
             print("Failed to receive RoomInfo from WebSocket: \(error)")
             return nil
+        }
+    }
+
+    func send(data: Data) {
+        webSocketTask.send(.data(data)) { error in
+            if let error = error {
+                print("Failed to send data message: \(error)")
+            }
         }
     }
 }
