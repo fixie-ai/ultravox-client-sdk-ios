@@ -459,7 +459,7 @@ private final class WebSocketConnection: NSObject, Sendable {
 
     func send(data: Data) {
         webSocketTask.send(.data(data)) { error in
-            if let error = error {
+            if let error {
                 print("Failed to send data message: \(error)")
             }
         }
