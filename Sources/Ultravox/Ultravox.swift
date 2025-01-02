@@ -458,7 +458,11 @@ private final class WebSocketConnection: NSObject, Sendable {
     }
 
     func send(data: Data) {
-        webSocketTask.send(.data(data)) { error in
+        guard let str = String(data: data, encoding: .utf8) else {
+            print("Failed to convert data to UTF8")
+            return
+        }
+        webSocketTask.send(.string(str)) { error in
             if let error {
                 print("Failed to send data message: \(error)")
             }
