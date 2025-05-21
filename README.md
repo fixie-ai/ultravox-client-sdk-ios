@@ -53,8 +53,10 @@ For a complete example, see https://github.com/fixie-ai/ultravox-client-sdk-ios-
 
 To get a `joinUrl`, you'll want to integrate your server with the [Ultravox REST API](https://fixie-ai.github.io/ultradox/).
 
-# To release a new version:
+# Development:
+Run [swiftformat](https://swiftpackageindex.com/nicklockwood/SwiftFormat) to properly format the code.
 
+## Release Process
 1. Update the sdkVersion constant at the top of Ultravox.swift. This is also the tag you'll use below. It MUST follow semantic versioning.
 
 1. Get your change reviewed and merged.
