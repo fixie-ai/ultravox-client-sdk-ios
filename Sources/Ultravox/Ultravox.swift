@@ -1,11 +1,12 @@
 import AVFoundation
 import Foundation
 @preconcurrency import LiveKit
+import Network
 import WebKit
 
 // MARK: - SDK Version
 
-private let sdkVersion: String = "0.0.8"
+private let sdkVersion: String = "0.0.9"
 
 // MARK: - Enums
 
@@ -194,7 +195,9 @@ public final class UltravoxSession: NSObject {
     ///
     /// If the call is started with a client-implemented tool, this implementation
     /// will be invoked when the model calls the tool.
-    public func registerToolImplementation(name: String, implementation: @escaping ClientToolImplementation) {
+    public func registerToolImplementation(
+        name: String, implementation: @escaping ClientToolImplementation
+    ) {
         registeredTools[name] = implementation
     }
 
@@ -207,8 +210,11 @@ public final class UltravoxSession: NSObject {
 
     /// Connects to a call using the given `joinUrl`.
     public func joinCall(joinUrl: String, clientVersion: String? = nil) async {
-        guard let url = URL(string: joinUrl) else { return }
         precondition(status == .disconnected, "Cannot join a call while already connected.")
+        guard let url = URL(string: joinUrl) else {
+            print("Invalid join URL: \(joinUrl)")
+            return
+        }
         status = .connecting
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var queryItems: [URLQueryItem] = urlComponents?.queryItems ?? []
@@ -219,22 +225,33 @@ public final class UltravoxSession: NSObject {
         queryItems.append(URLQueryItem(name: "clientVersion", value: uvClientVersion))
         queryItems.append(URLQueryItem(name: "apiVersion", value: "1"))
         if !experimentalMessages.isEmpty {
-            queryItems.append(URLQueryItem(name: "experimentalMessages", value: experimentalMessages.joined(separator: ",")))
+            queryItems.append(
+                URLQueryItem(
+                    name: "experimentalMessages", value: experimentalMessages.joined(separator: ",")
+                ))
         }
         urlComponents?.queryItems = queryItems
         if let finalUrl = urlComponents?.url {
-            let webSocketTask = URLSession.shared.webSocketTask(with: URLRequest(url: finalUrl))
-            socket = WebSocketConnection(webSocketTask: webSocketTask)
-            guard let roomInfo = await socket?.receiveOnce() else { return }
-            room = Room(delegate: self)
+            socket = WebSocketConnection(url: finalUrl)
+
             do {
+                // receiveOnce() now throws on error, or returns RoomInfoMessage? (though current impl should always return non-nil on success)
+                guard let roomInfo = try await socket?.receiveOnce() else {
+                    print("Failed to receive room info: receiveOnce returned nil or socket was nil.")
+                    await disconnect()
+                    return
+                }
+                room = Room(delegate: self)
                 try await room?.connect(url: roomInfo.roomUrl, token: roomInfo.token)
                 try await room?.localParticipant.setMicrophone(enabled: !micMuted)
                 status = .idle
             } catch {
-                room = nil
-                print("Error connecting to room: \(error)")
+                print("Error during call setup (receiving room info or connecting to LiveKit): \(error)")
+                await disconnect() // This will set status to .disconnected and clean up socket/room
             }
+        } else {
+            print("Could not construct final URL for WebSocket connection.")
+            status = .disconnected // Ensure status is reset
         }
     }
 
@@ -252,7 +269,9 @@ public final class UltravoxSession: NSObject {
             print("Cannot set speaker medium while not connected. Current status: \(status)")
             return
         }
-        await sendData(data: ["type": "set_output_medium", "medium": medium == .voice ? "voice" : "text"])
+        await sendData(data: [
+            "type": "set_output_medium", "medium": medium == .voice ? "voice" : "text",
+        ])
     }
 
     /// Sends a message via text.
@@ -269,12 +288,16 @@ public final class UltravoxSession: NSObject {
     /// See https://docs.ultravox.ai/datamessages for message types.
     public func sendData(data: [String: Any]) async {
         guard data["type"] != nil else { return }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else { return }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: []) else {
+            return
+        }
         if jsonData.count > 1024 {
-            socket?.send(data: jsonData)
+            await socket?.send(data: jsonData)
         } else {
             do {
-                try await room?.localParticipant.publish(data: jsonData, options: DataPublishOptions(reliable: true))
+                try await room?.localParticipant.publish(
+                    data: jsonData, options: DataPublishOptions(reliable: true)
+                )
             } catch {
                 print("Error publishing data: \(error)")
             }
@@ -312,7 +335,10 @@ public final class UltravoxSession: NSObject {
                 let medium = message["medium"] as? String == "voice" ? Medium.voice : Medium.text
                 let role = message["role"] as? String == "agent" ? Role.agent : Role.user
                 let isFinal = message["final"] as? Bool ?? false
-                addOrUpdateTranscript(ordinal: ordinal, medium: medium, role: role, isFinal: isFinal, text: message["text"] as? String, delta: message["delta"] as? String)
+                addOrUpdateTranscript(
+                    ordinal: ordinal, medium: medium, role: role, isFinal: isFinal,
+                    text: message["text"] as? String, delta: message["delta"] as? String
+                )
             }
         case "client_tool_invocation":
             if let toolName = message["toolName"] as? String,
@@ -320,7 +346,9 @@ public final class UltravoxSession: NSObject {
                let parameters = message["parameters"] as? [String: Any]
             {
                 Task {
-                    await invokeClientTool(toolName: toolName, invocationId: invocationId, parameters: parameters)
+                    await invokeClientTool(
+                        toolName: toolName, invocationId: invocationId, parameters: parameters
+                    )
                 }
             }
         default:
@@ -330,20 +358,27 @@ public final class UltravoxSession: NSObject {
         }
     }
 
-    private func addOrUpdateTranscript(ordinal: Int, medium: Medium, role: Role, isFinal: Bool, text: String?, delta: String?) {
+    private func addOrUpdateTranscript(
+        ordinal: Int, medium: Medium, role: Role, isFinal: Bool, text: String?, delta: String?
+    ) {
         while _transcripts.count < ordinal {
             _transcripts.append(nil)
         }
         if _transcripts.count == ordinal {
-            _transcripts.append(Transcript(text: text ?? delta ?? "", isFinal: isFinal, speaker: role, medium: medium))
+            _transcripts.append(
+                Transcript(text: text ?? delta ?? "", isFinal: isFinal, speaker: role, medium: medium))
         } else {
             let priorText = _transcripts[ordinal]?.text ?? ""
-            _transcripts[ordinal] = Transcript(text: text ?? (priorText + (delta ?? "")), isFinal: isFinal, speaker: role, medium: medium)
+            _transcripts[ordinal] = Transcript(
+                text: text ?? (priorText + (delta ?? "")), isFinal: isFinal, speaker: role, medium: medium
+            )
         }
         NotificationCenter.default.post(name: .transcripts, object: nil)
     }
 
-    private func invokeClientTool(toolName: String, invocationId: String, parameters: [String: Any]) async {
+    private func invokeClientTool(toolName: String, invocationId: String, parameters: [String: Any])
+        async
+    {
         guard let implementation = registeredTools[toolName] else {
             await sendData(data: [
                 "type": "client_tool_result",
@@ -386,9 +421,13 @@ public final class UltravoxSession: NSObject {
 }
 
 extension UltravoxSession: RoomDelegate {
-    public nonisolated func room(_: Room, participant _: RemoteParticipant?, didReceiveData data: Data, forTopic _: String) {
+    public nonisolated func room(
+        _: Room, participant _: RemoteParticipant?, didReceiveData data: Data, forTopic _: String
+    ) {
         Task {
-            guard let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return }
+            guard
+                let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+            else { return }
             await self.handleData(message: message)
         }
     }
@@ -408,64 +447,219 @@ private struct RoomInfoMessage: Sendable {
     let token: String
 }
 
-private final class WebSocketConnection: NSObject, Sendable {
-    private let webSocketTask: URLSessionWebSocketTask
+// MARK: - WebSocketConnection Actor
+
+// Converted to an actor to manage mutable state for Sendable conformance.
+private actor WebSocketConnection: NSObject {
+    // NWConnection related properties
+    private let connection: NWConnection
+    private let serialQueue = DispatchQueue(label: "com.ultravox.websocket.serial") // For NWConnection operations
+
+    // Continuations for bridging delegate/callback patterns with async/await
+    private var messageContinuation: AsyncThrowingStream<RoomInfoMessage, Error>.Continuation?
+    private var receivedRoomInfoContinuation: CheckedContinuation<RoomInfoMessage?, Error>?
 
     init(
-        webSocketTask: URLSessionWebSocketTask
+        url: URL
     ) {
-        self.webSocketTask = webSocketTask
+        let endpoint = NWEndpoint.url(url)
+        let parameters = if url.scheme == "wss" {
+            NWParameters.tls
+        } else {
+            NWParameters.tcp
+        }
+
+        let webSocketOptions = NWProtocolWebSocket.Options()
+        webSocketOptions.autoReplyPing = true
+        parameters.defaultProtocolStack.applicationProtocols.insert(webSocketOptions, at: 0)
+        connection = NWConnection(to: endpoint, using: parameters)
         super.init()
-        webSocketTask.resume()
+        // Defer starting the connection until a receive method is called.
     }
 
-    deinit {
-        // Make sure to cancel the WebSocketTask (if not already canceled or completed)
-        webSocketTask.cancel(with: .goingAway, reason: nil)
+    private func startConnection() {
+        // This method is called when receiveOnce or generalMessageStream is invoked.
+        // All subsequent operations on connection (handlers, receiveNextMessage) are scheduled on serialQueue.
+        setupConnectionHandlers()
+        connection.start(queue: serialQueue)
     }
 
-    private func receiveSingleMessage() async throws -> RoomInfoMessage? {
-        switch try await webSocketTask.receive() {
-        case let .data(messageData):
-            print("Unexpected data message")
-            return nil
-
-        case let .string(text):
-            guard let data = text.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else { return nil }
-            guard message["type"] as? String == "room_info" else { return nil }
-            guard let roomUrl = message["roomUrl"] as? String else { return nil }
-            guard let token = message["token"] as? String else { return nil }
-            return RoomInfoMessage(roomUrl: roomUrl, token: token)
-
-        @unknown default:
-            print("Unexpected message type")
-            return nil
+    private func setupConnectionHandlers() {
+        connection.stateUpdateHandler = { [weak self] newState in // weak self might be redundant for actor but safe
+            // Dispatch to actor's serial executor to ensure state mutation is synchronized
+            Task {
+                guard let self else { return }
+                await self.handleConnectionStateUpdate(newState)
+            }
         }
     }
 
-    func receiveOnce() async -> RoomInfoMessage? {
-        do {
-            while true {
-                let message = try await receiveSingleMessage()
-                if message != nil {
-                    return message
-                }
+    private func handleConnectionStateUpdate(_ newState: NWConnection.State) {
+        switch newState {
+        case .ready:
+            print("WebSocket connection ready.")
+            receiveNextMessage() // Start receiving messages
+        case let .failed(error):
+            print("WebSocket connection failed: \(error)")
+            receivedRoomInfoContinuation?.resume(throwing: error)
+            receivedRoomInfoContinuation = nil
+            messageContinuation?.finish(throwing: error)
+            connection.cancel()
+        case .cancelled:
+            print("WebSocket connection cancelled.")
+            let error = NWError.posix(.ECANCELED)
+            receivedRoomInfoContinuation?.resume(throwing: error)
+            receivedRoomInfoContinuation = nil
+            messageContinuation?.finish(throwing: error)
+        case .preparing:
+            print("WebSocket connection preparing...")
+        case let .waiting(error):
+            print("WebSocket connection waiting: \(error)")
+            receivedRoomInfoContinuation?.resume(throwing: error)
+            receivedRoomInfoContinuation = nil
+            messageContinuation?.finish(throwing: error)
+        // Ensure all known cases are handled or use @unknown default
+        // Explicitly listing known cases for clarity, even with @unknown default later
+        case .setup: // NWConnection.State also has .setup
+            print("WebSocket connection in setup state.")
+        @unknown default:
+            print("WebSocket connection unknown state: \(newState)")
+            let error = NWError.posix(.EIO) // Generic I/O error
+            receivedRoomInfoContinuation?.resume(throwing: error)
+            receivedRoomInfoContinuation = nil
+            messageContinuation?.finish(throwing: error)
+        }
+    }
+
+    deinit {
+        connection.cancel()
+        messageContinuation?.finish()
+        if let continuation = receivedRoomInfoContinuation {
+            continuation.resume(throwing: NWError.posix(.ECANCELED))
+            // receivedRoomInfoContinuation = nil // Not needed as it's deinit
+        }
+    }
+
+    private func receiveNextMessage() {
+        connection.receiveMessage { [weak self] completeContent, contentContext, isComplete, error in
+            Task {
+                guard let self else { return }
+                await self.handleReceivedMessage(
+                    completeContent: completeContent, contentContext: contentContext, isComplete: isComplete,
+                    error: error
+                )
             }
-        } catch {
-            print("Failed to receive RoomInfo from WebSocket: \(error)")
-            return nil
+        }
+    }
+
+    private func handleReceivedMessage(
+        completeContent: Data?, contentContext: NWConnection.ContentContext?, isComplete: Bool,
+        error: Error?
+    ) {
+        if let error {
+            print("Error receiving message: \(error)")
+            if let continuation = receivedRoomInfoContinuation {
+                continuation.resume(throwing: error)
+                receivedRoomInfoContinuation = nil
+            } else {
+                messageContinuation?.finish(throwing: error)
+            }
+            return
+        }
+
+        guard let content = completeContent, isComplete else {
+            print("Received incomplete message data or context without error. Waiting for more.")
+            receiveNextMessage() // Continue trying to receive
+            return
+        }
+
+        if contentContext?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+            is NWProtocolWebSocket.Metadata,
+            let text = String(data: content, encoding: .utf8)
+        {
+            do {
+                guard let jsonData = text.data(using: .utf8),
+                      let messageDict = try JSONSerialization.jsonObject(with: jsonData, options: [])
+                      as? [String: Any],
+                      messageDict["type"] as? String == "room_info",
+                      let roomUrl = messageDict["roomUrl"] as? String,
+                      let token = messageDict["token"] as? String
+                else {
+                    print("Received a message, but it's not the RoomInfoMessage or it's malformed: \(text)")
+                    receiveNextMessage() // Continue listening
+                    return
+                }
+                let roomInfo = RoomInfoMessage(roomUrl: roomUrl, token: token)
+
+                if let continuation = receivedRoomInfoContinuation {
+                    continuation.resume(returning: roomInfo)
+                    receivedRoomInfoContinuation = nil
+                } else {
+                    messageContinuation?.yield(roomInfo)
+                }
+                receiveNextMessage() // Continue listening for more messages
+
+            } catch {
+                print("Failed to deserialize RoomInfoMessage JSON: \(error)")
+                if let continuation = receivedRoomInfoContinuation {
+                    continuation.resume(throwing: error)
+                    receivedRoomInfoContinuation = nil
+                } else {
+                    messageContinuation?.finish(throwing: error)
+                }
+                receiveNextMessage() // Attempt to recover by listening
+            }
+        } else {
+            print("Received non-text WebSocket message or unexpected content.")
+            receiveNextMessage() // Continue listening
+        }
+    }
+
+    // This method will provide the first RoomInfoMessage
+    func receiveOnce() async throws -> RoomInfoMessage? {
+        guard receivedRoomInfoContinuation == nil else {
+            print("receiveOnce called while another is already in progress.")
+            throw NWError.posix(.EBUSY)
+        }
+
+        if connection.state == .setup {
+            startConnection()
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            self.receivedRoomInfoContinuation = continuation
         }
     }
 
     func send(data: Data) {
         guard let str = String(data: data, encoding: .utf8) else {
-            print("Failed to convert data to UTF8")
+            print("Failed to convert data to UTF8 for sending via WebSocket")
             return
         }
-        webSocketTask.send(.string(str)) { error in
-            if let error {
-                print("Failed to send data message: \(error)")
+
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+        let context = NWConnection.ContentContext(identifier: "textContext", metadata: [metadata])
+
+        // Send operation itself doesn't need to be on actor's serial queue unless it manipulates actor state directly before/after.
+        // NWConnection's send has its own completion that will be handled.
+        connection.send(
+            content: str.data(using: .utf8), contentContext: context, isComplete: true,
+            completion: .contentProcessed { error in
+                // This completion handler is called on the NWConnection's queue (self.serialQueue)
+                // If we need to update actor state here, we would Task { await self.updateState... }
+                if let error {
+                    print("Failed to send data message via WebSocket: \(error)")
+                }
             }
+        )
+    }
+
+    func generalMessageStream() -> AsyncThrowingStream<RoomInfoMessage, Error> {
+        if connection.state == .setup {
+            startConnection()
+        }
+        return AsyncThrowingStream { continuation in
+            self.messageContinuation = continuation
         }
     }
 }
